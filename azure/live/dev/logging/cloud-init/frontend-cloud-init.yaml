@@ -5,15 +5,20 @@ package_reboot_if_required: true
 
 packages:
   - apt-transport-https
-  - openjdk-11-jre-headless
-  - uuid-runtime
-  - pwgen
   - nginx
+  - openjdk-17-jre-headless
+  - pwgen
   - jq
-  - curl
-  - haveged
 
 write_files:
+  - path: /etc/graylog/server/server.conf
+    content: |
+      password_secret = $ADMIN_PASS
+      root_password_sha2 = $ROOT_PASSWORD_SHA2
+      http_bind_address = 0.0.0.0:9000
+      elasticsearch_hosts = http://$BACKEND_IP:9200
+      mongodb_uri = mongodb://graylog:$MONGO_PASS@$BACKEND_IP:27017/graylog
+      message_journal_max_age = 24h
   - path: /etc/nginx/sites-available/graylog
     content: |
       server {
@@ -23,63 +28,37 @@ write_files:
               proxy_set_header Host $http_host;
               proxy_set_header X-Real-IP $remote_addr;
               proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-              proxy_set_header X-Forwarded-Proto $scheme;
               proxy_pass http://127.0.0.1:9000;
-              proxy_read_timeout 90;
           }
       }
-  - path: /etc/systemd/system/graylog-restart.service
-    content: |
-      [Unit]
-      Description=Graylog Restart Service
-      After=network.target
-      
-      [Service]
-      ExecStart=/usr/bin/systemctl restart graylog-server
-      Restart=always
-      RestartSec=60
-      
-      [Install]
-      WantedBy=multi-user.target
 
 runcmd:
   # Install Graylog
-  - wget -qO /tmp/graylog.deb https://packages.graylog2.org/repo/packages/graylog-4.3-repository_latest.deb
-  - dpkg -i /tmp/graylog.deb
-  - apt-get update && apt-get install -y graylog-server graylog-enterprise-plugins
+  - wget https://packages.graylog2.org/repo/packages/graylog-5.1-repository_latest.deb
+  - dpkg -i graylog-5.1-repository_latest.deb
+  - apt-get update && apt-get install -y graylog-server
 
   # Get secrets from Key Vault
   - |
     ACCESS_TOKEN=$(curl -s 'http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https%3A%2F%2Fvault.azure.net' -H Metadata:true | jq -r .access_token)
     SECRET_KEY=$(curl -s "https://${key_vault_name}.vault.azure.net/secrets/${secret_key_name}?api-version=7.3" -H "Authorization: Bearer $ACCESS_TOKEN" | jq -r .value)
     ADMIN_PASS=$(curl -s "https://${key_vault_name}.vault.azure.net/secrets/${admin_password_name}?api-version=7.3" -H "Authorization: Bearer $ACCESS_TOKEN" | jq -r .value)
-    ADMIN_HASH=$(echo -n "$ADMIN_PASS" | sha256sum | cut -d" " -f1)
     MONGO_PASS=$(curl -s "https://${key_vault_name}.vault.azure.net/secrets/${mongodb_password_name}?api-version=7.3" -H "Authorization: Bearer $ACCESS_TOKEN" | jq -r .value)
     BACKEND_IP=$(echo "${backend_subnet_cidr}" | awk -F/ '{print $1}' | awk -F. '{print $1"."$2"."$3".4"}')
+    ROOT_PASSWORD_SHA2=$(echo -n "$ADMIN_PASS" | sha256sum | cut -d" " -f1)
 
-  # Configure Graylog
-  - |
-    cat > /etc/graylog/server/server.conf << EOF
-    password_secret = $SECRET_KEY
-    root_password_sha2 = $ADMIN_HASH
-    http_bind_address = 0.0.0.0:9000
-    elasticsearch_hosts = http://$BACKEND_IP:9200
-    mongodb_uri = mongodb://graylog:$MONGO_PASS@$BACKEND_IP:27017/graylog
-    EOF
+    # Populate config
+    sed -i "s|\$SECRET_KEY|$SECRET_KEY|" /etc/graylog/server/server.conf
+    sed -i "s|\$ROOT_PASSWORD_SHA2|$ROOT_PASSWORD_SHA2|" /etc/graylog/server/server.conf
+    sed -i "s|\$MONGO_PASS|$MONGO_PASS|" /etc/graylog/server/server.conf
+    sed -i "s|\$BACKEND_IP|$BACKEND_IP|" /etc/graylog/server/server.conf
 
-  # Enable services
-  - systemctl daemon-reload
-  - systemctl enable graylog-restart.service nginx
-  - systemctl start graylog-restart.service nginx
+  # Configure Nginx
   - ln -s /etc/nginx/sites-available/graylog /etc/nginx/sites-enabled/
   - nginx -t && systemctl restart nginx
 
-  # Enable swap
-  - fallocate -l 2G /swapfile
-  - chmod 600 /swapfile
-  - mkswap /swapfile
-  - swapon /swapfile
-  - echo "/swapfile none swap sw 0 0" >> /etc/fstab
+  # Start Graylog
+  - systemctl enable --now graylog-server
 
-  # Schedule daily updates
-  - echo "0 3 * * * apt-get update && apt-get upgrade -y && reboot" | crontab -
+  # Verify services
+  - curl -I http://localhost:9000/api

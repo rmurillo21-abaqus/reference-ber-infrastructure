@@ -187,7 +187,7 @@ resource "azurerm_linux_virtual_machine" "graylog_frontend" {
     zone                = "1"
 
 
-    custom_data = base64encode(templatefile("${path.module}/cloud-init/frontend.yaml", {
+    custom_data = base64encode(templatefile("${path.module}/cloud-init/frontend-cloud-init.yaml", {
         key_vault_name        = azurerm_key_vault.graylog_secrets.name
         backend_subnet_cidr   = data.azurerm_subnet.backend.address_prefix
         secret_key_name       = local.graylog_sk_name 
@@ -276,7 +276,7 @@ resource "azurerm_linux_virtual_machine" "graylog_backend" {
         identity_ids = [azurerm_user_assigned_identity.graylog_vms.id]
     }
 
-    custom_data = base64encode(templatefile("${path.module}/cloud-init/backend.yaml", {
+    custom_data = base64encode(templatefile("${path.module}/cloud-init/backend-cloud-init.yaml", {
         key_vault_name = azurerm_key_vault.graylog_secrets.name
         mongodb_password_name = local.mongodb_sk_password_name 
     }))

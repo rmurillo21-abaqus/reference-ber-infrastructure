@@ -69,7 +69,7 @@ variable "frontend_instance_size" {
 
 variable "backend_instance_size" {
   type        = string
-  default = "Standard_D2s_v3"
+  default = "Standard_D4s_v3"
 }
 
 # Application Gateway
