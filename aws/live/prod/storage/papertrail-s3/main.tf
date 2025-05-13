@@ -8,7 +8,7 @@ locals {
 module "s3_bucket" {
   # checkov:skip=CKV_TF_1 Ensure Terraform module sources use a commit hash.
   # checkov:skip=CKV_TF_2 Ensure Terraform module sources use a tag with a version number.
-  source = "git::https://@github.com/rmurillo21/terraform-modules.git//modules/aws/s3?ref=develop"
+  source = "git::https://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@github.com/rmurillo21/terraform-modules.git//modules/aws/s3?ref=develop"
 
   bucket        = local.bucket_name
   acl           = var.acl_type
