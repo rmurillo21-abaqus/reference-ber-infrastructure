@@ -4,61 +4,37 @@ package_upgrade: true
 package_reboot_if_required: true
 
 packages:
-  - apt-transport-https
-  - nginx
-  - openjdk-17-jre-headless
-  - pwgen
-  - jq
-
-write_files:
-  - path: /etc/graylog/server/server.conf
-    content: |
-      password_secret = $ADMIN_PASS
-      root_password_sha2 = $ROOT_PASSWORD_SHA2
-      http_bind_address = 0.0.0.0:9000
-      elasticsearch_hosts = http://$BACKEND_IP:9200
-      mongodb_uri = mongodb://graylog:$MONGO_PASS@$BACKEND_IP:27017/graylog
-      message_journal_max_age = 24h
-  - path: /etc/nginx/sites-available/graylog
-    content: |
-      server {
-          listen 80;
-          server_name _;
-          location / {
-              proxy_set_header Host $http_host;
-              proxy_set_header X-Real-IP $remote_addr;
-              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-              proxy_pass http://127.0.0.1:9000;
-          }
-      }
+  - gnupg
+  - curl
+  - net-tools
 
 runcmd:
+  # Set timezone
+  - timedatectl set-timezone UTC
+
   # Install Graylog
-  - wget https://packages.graylog2.org/repo/packages/graylog-5.1-repository_latest.deb
-  - dpkg -i graylog-5.1-repository_latest.deb
-  - apt-get update && apt-get install -y graylog-server
+  - wget https://packages.graylog2.org/repo/packages/graylog-6.0-repository_latest.deb
+  - dpkg -i graylog-6.0-repository_latest.deb
+  - apt-get update
+  - apt-get install -y graylog-server
+  - apt-mark hold graylog-server
 
-  # Get secrets from Key Vault
+
+  # Update or add required configurations (non-destructive)
+  - sed -i '/^password_secret/c\password_secret = ${password_secret}' /etc/graylog/server/server.conf
+  - sed -i '/^root_password_sha2/c\root_password_sha2 = ${root_password_sha2}' /etc/graylog/server/server.conf
+  - sed -i '/^root_username/c\root_username = admin' /etc/graylog/server/server.conf
+  - sed -i '/^#http_bind_address/c\http_bind_address = 0.0.0.0:9000' /etc/graylog/server/server.conf
+  - sed -i '/^#elasticsearch_hosts/c\elasticsearch_hosts = http://${backend_ip}:9200' /etc/graylog/server/server.conf
+  - sed -i '/^mongodb_uri/c\mongodb_uri = mongodb://${backend_ip}:27017/graylog' /etc/graylog/server/server.conf
+
+    # Start Graylog
+  - systemctl daemon-reload
+  - systemctl enable graylog-server.service
+  - systemctl start graylog-server.service
+
+  # Output access info
   - |
-    ACCESS_TOKEN=$(curl -s 'http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https%3A%2F%2Fvault.azure.net' -H Metadata:true | jq -r .access_token)
-    SECRET_KEY=$(curl -s "https://${key_vault_name}.vault.azure.net/secrets/${secret_key_name}?api-version=7.3" -H "Authorization: Bearer $ACCESS_TOKEN" | jq -r .value)
-    ADMIN_PASS=$(curl -s "https://${key_vault_name}.vault.azure.net/secrets/${admin_password_name}?api-version=7.3" -H "Authorization: Bearer $ACCESS_TOKEN" | jq -r .value)
-    MONGO_PASS=$(curl -s "https://${key_vault_name}.vault.azure.net/secrets/${mongodb_password_name}?api-version=7.3" -H "Authorization: Bearer $ACCESS_TOKEN" | jq -r .value)
-    BACKEND_IP=$(echo "${backend_subnet_cidr}" | awk -F/ '{print $1}' | awk -F. '{print $1"."$2"."$3".4"}')
-    ROOT_PASSWORD_SHA2=$(echo -n "$ADMIN_PASS" | sha256sum | cut -d" " -f1)
-
-    # Populate config
-    sed -i "s|\$SECRET_KEY|$SECRET_KEY|" /etc/graylog/server/server.conf
-    sed -i "s|\$ROOT_PASSWORD_SHA2|$ROOT_PASSWORD_SHA2|" /etc/graylog/server/server.conf
-    sed -i "s|\$MONGO_PASS|$MONGO_PASS|" /etc/graylog/server/server.conf
-    sed -i "s|\$BACKEND_IP|$BACKEND_IP|" /etc/graylog/server/server.conf
-
-  # Configure Nginx
-  - ln -s /etc/nginx/sites-available/graylog /etc/nginx/sites-enabled/
-  - nginx -t && systemctl restart nginx
-
-  # Start Graylog
-  - systemctl enable --now graylog-server
-
-  # Verify services
-  - curl -I http://localhost:9000/api
+    echo "Graylog installation complete!"
+    echo "Web Interface: http://$(hostname -I | awk '{print $1}'):9000"
+    echo "Username: admin"

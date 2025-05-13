@@ -176,6 +176,13 @@ resource "azurerm_network_interface" "frontend" {
     }
 }
 
+resource "random_string" "graylog_password_secret" {
+  length  = 96
+  special = false
+  upper   = true
+  lower   = true
+}
+
 resource "azurerm_linux_virtual_machine" "graylog_frontend" {
     name                = "${local.resource_name}-frontend-vm"
     resource_group_name = azurerm_resource_group.graylog.name
@@ -188,11 +195,9 @@ resource "azurerm_linux_virtual_machine" "graylog_frontend" {
 
 
     custom_data = base64encode(templatefile("${path.module}/cloud-init/frontend-cloud-init.yaml", {
-        key_vault_name        = azurerm_key_vault.graylog_secrets.name
-        backend_subnet_cidr   = data.azurerm_subnet.backend.address_prefix
-        secret_key_name       = local.graylog_sk_name 
-        admin_password_name   = local.admin_sk_password_name
-        mongodb_password_name = local.mongodb_sk_password_name
+        backend_ip            = azurerm_network_interface.backend.private_ip_address
+        password_secret       = random_string.graylog_password_secret.result
+        root_password_sha2    = sha256("PasswordGraylog12345!")
     }))
 
 
